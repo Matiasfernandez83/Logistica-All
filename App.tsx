@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Stats } from './components/Stats';
@@ -17,7 +18,11 @@ import clsx from 'clsx';
 function App() {
   // --- AUTH & THEME STATE ---
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [theme, setTheme] = useState<ThemeSettings>({ primaryColor: 'blue', fontFamily: 'inter' });
+  const [theme, setTheme] = useState<ThemeSettings>({ 
+      primaryColor: 'blue', 
+      fontFamily: 'inter', 
+      processingMode: 'free' // Default to free mode for safety
+  });
 
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [records, setRecords] = useState<TruckRecord[]>([]);
@@ -129,19 +134,40 @@ function App() {
   const handleProcess = async () => {
     if (files.length === 0) return;
 
-    setStatus({ isProcessing: true, error: null, success: false, processedCount: 0, totalCount: files.length });
-    
-    // Process files in batches or sequentially to avoid overwhelming browser memory if too many
-    // For improved UI, we process them one by one or in small groups and catch errors individually
+    // Initial check for environment (best effort)
+    if (!process.env.API_KEY) {
+        setStatus({
+            isProcessing: false,
+            error: "ERROR DE CONFIGURACIÓN: No se encontró la API_KEY. Si está en la nube, asegúrese de agregar la variable de entorno API_KEY en su panel de despliegue.",
+            success: false
+        });
+        return;
+    }
+
+    // Reset status but keep files to show progress
+    setStatus({ 
+        isProcessing: true, 
+        error: null, 
+        success: false, 
+        processedCount: 0, 
+        totalCount: files.length 
+    });
     
     let successCount = 0;
-    const processedContents: { mimeType: string, data: string, name: string, type: string }[] = [];
     const failedFiles: string[] = [];
+    const newRecordsAcc: TruckRecord[] = [];
+    const filesToSaveAcc: UploadedFile[] = [];
+
+    // Determine Delay based on Mode
+    const processingDelay = theme.processingMode === 'fast' ? 500 : 5000;
 
     try {
+        // Process files sequentially (One by One) with delay
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
+            
             try {
+                // 1. Read File content
                 let contentData = '';
                 let mimeType = '';
 
@@ -152,58 +178,77 @@ function App() {
                     contentData = await parseExcelToCSV(file);
                     mimeType = 'text/plain';
                 } else {
-                    // Image fallback
                     contentData = await fileToBase64(file);
                     mimeType = file.type || 'image/jpeg';
                 }
 
-                processedContents.push({ mimeType, data: contentData, name: file.name, type: file.type });
-                successCount++;
-                setStatus(prev => ({ ...prev, processedCount: successCount }));
+                // 2. Call AI for THIS file only
+                // Add explicit delay between files to avoid Rate Limits (or just safety)
+                if (i > 0) {
+                    await new Promise(resolve => setTimeout(resolve, processingDelay));
+                }
 
-            } catch (fileErr) {
-                console.error(`Error reading file ${file.name}:`, fileErr);
-                failedFiles.push(file.name);
+                const resultRecords = await processDocuments([{ mimeType, data: contentData }]);
+                
+                // 3. Verify extracted records against Fleet DB
+                const verifiedSubset = verifyRecords(resultRecords, fleetDb);
+                newRecordsAcc.push(...verifiedSubset);
+
+                // 4. Prepare file for history storage
+                filesToSaveAcc.push({
+                    name: file.name,
+                    type: file.type,
+                    size: file.size,
+                    content: contentData
+                });
+
+                // 5. Update UI Progress
+                successCount++;
+                setStatus(prev => ({ 
+                    ...prev, 
+                    processedCount: successCount 
+                }));
+
+            } catch (fileErr: any) {
+                console.error(`Error processing file ${file.name}:`, fileErr);
+                const msg = fileErr.message || 'Error desconocido';
+                failedFiles.push(`${file.name}: ${msg}`);
             }
         }
 
-        if (processedContents.length > 0) {
-            // Generate AI Records
-            const newRecords = await processDocuments(processedContents.map(c => ({ mimeType: c.mimeType, data: c.data })));
-            
-            // Verify
-            const verifiedRecords = verifyRecords(newRecords, fleetDb);
-            
-            // Save Records to DB
-            const allRecords = [...records, ...verifiedRecords];
+        // 6. Save accumulated data to State and DB
+        if (newRecordsAcc.length > 0) {
+            const allRecords = [...records, ...newRecordsAcc];
             setRecords(allRecords);
             await saveRecords(allRecords);
-
-            // Save Files to DB (History)
-            const filesToSave: UploadedFile[] = processedContents.map(c => ({
-                name: c.name,
-                type: c.type,
-                size: 0,
-                content: c.data
-            }));
-            await saveFiles(filesToSave);
+            
+            await saveFiles(filesToSaveAcc);
         }
 
-        setStatus({ 
-            isProcessing: false, 
-            error: failedFiles.length > 0 ? `Se procesaron ${successCount} archivos. Fallaron: ${failedFiles.join(', ')}` : null, 
-            success: true 
-        });
-        
-        if (failedFiles.length === 0) {
-             setFiles([]); 
+        // 7. Final Status
+        if (failedFiles.length > 0) {
+            const errorMsg = `Se procesaron ${successCount} archivos. Fallas: ${failedFiles.join(' | ')}`;
+            setStatus({ 
+                isProcessing: false, 
+                error: errorMsg, 
+                success: successCount > 0 // Partial success is still success
+            });
+            // Don't clear queue if there are errors so user can see which ones failed (or retry)
+        } else {
+             setStatus({ 
+                isProcessing: false, 
+                error: null, 
+                success: true 
+            });
+            // Clear queue only on full success
+            setFiles([]);
         }
 
     } catch (err: any) {
       console.error(err);
       setStatus({ 
         isProcessing: false, 
-        error: "Error crítico al comunicar con la IA. Verifique su conexión.", 
+        error: "Error del sistema: " + (err.message || ''), 
         success: false 
       });
     }
@@ -351,7 +396,11 @@ function App() {
                                                 )}
                                                 <span className="text-sm font-medium truncate text-slate-700">{file.name}</span>
                                             </div>
-                                            <button onClick={() => removeFile(idx)} className="text-slate-400 hover:text-red-500 p-1">
+                                            <button 
+                                                onClick={() => removeFile(idx)} 
+                                                disabled={status.isProcessing}
+                                                className="text-slate-400 hover:text-red-500 p-1 disabled:opacity-50"
+                                            >
                                                 <X size={16} />
                                             </button>
                                         </div>
@@ -368,20 +417,33 @@ function App() {
                                     {status.isProcessing ? (
                                         <>
                                             <Loader2 className="animate-spin" size={20} />
-                                            <span>Procesando {status.processedCount}/{status.totalCount || files.length}...</span>
+                                            <span>Procesando archivo {status.processedCount! + 1} de {status.totalCount}...</span>
                                         </>
                                     ) : (
                                         <>
                                             <span>Iniciar Unificación Masiva</span>
+                                            {theme.processingMode === 'free' && <span className="text-xs bg-white/20 px-2 py-0.5 rounded ml-2 font-normal">Modo Gratuito (Lento)</span>}
                                         </>
                                     )}
                                 </button>
+                                
+                                {status.isProcessing && (
+                                    <div className="w-full bg-slate-200 rounded-full h-2.5 mt-4">
+                                        <div 
+                                            className={`bg-${theme.primaryColor}-600 h-2.5 rounded-full transition-all duration-300`} 
+                                            style={{ width: `${(status.processedCount! / status.totalCount!) * 100}%` }}
+                                        ></div>
+                                    </div>
+                                )}
                             </div>
                         )}
                          {status.error && (
-                            <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-lg flex items-center gap-2 border border-red-100">
-                                <AlertCircle size={20} />
-                                <p>{status.error}</p>
+                            <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-lg flex items-start gap-2 border border-red-100 animate-in slide-in-from-top-2">
+                                <AlertCircle size={20} className="flex-shrink-0 mt-0.5" />
+                                <div className="flex-1">
+                                    <p className="font-bold text-sm">Ocurrieron errores:</p>
+                                    <p className="text-sm break-all">{status.error}</p>
+                                </div>
                             </div>
                         )}
                         {status.success && !status.error && (

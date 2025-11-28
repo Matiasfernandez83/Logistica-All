@@ -1,7 +1,8 @@
+
 import React, { useEffect, useState } from 'react';
 import { User, ThemeSettings } from '../types';
 import { getUsers, saveUser } from '../utils/storage';
-import { UserPlus, Palette, LogOut, Power, Maximize, Type, Users, Save } from 'lucide-react';
+import { UserPlus, Palette, LogOut, Power, Maximize, Type, Users, Save, Zap, Coffee } from 'lucide-react';
 import clsx from 'clsx';
 
 interface SettingsViewProps {
@@ -58,7 +59,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, current
     };
 
     return (
-        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-12">
             
             {/* Cabecera */}
             <div>
@@ -68,7 +69,62 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, current
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 
-                {/* 1. APARIENCIA */}
+                {/* 1. OPTIMIZACIÓN DE COSTOS (NUEVO) */}
+                <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                    <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                        <Zap className={`text-${currentTheme.primaryColor}-500`} />
+                        Optimización de Costos y API (Créditos)
+                    </h3>
+                    <p className="text-sm text-slate-500 mb-6">
+                        Selecciona cómo quieres que la IA procese tus archivos. Esto afecta la velocidad y el consumo de tu cuota de Google.
+                    </p>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* MODO GRATUITO */}
+                        <div 
+                            onClick={() => onUpdateTheme({ ...currentTheme, processingMode: 'free' })}
+                            className={clsx(
+                                "cursor-pointer p-4 rounded-xl border-2 transition-all flex items-start gap-4",
+                                (!currentTheme.processingMode || currentTheme.processingMode === 'free')
+                                    ? "border-green-500 bg-green-50" 
+                                    : "border-slate-200 bg-white hover:border-green-200"
+                            )}
+                        >
+                            <div className="p-2 bg-green-100 text-green-600 rounded-lg">
+                                <Coffee size={24} />
+                            </div>
+                            <div>
+                                <h4 className="font-bold text-slate-800">Modo Gratuito (Recomendado)</h4>
+                                <p className="text-xs text-slate-500 mt-1">
+                                    Procesa 1 archivo cada 5 segundos. Evita errores de cuota y no consume créditos de pago si usas el "Free Tier" de Gemini.
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* MODO RÁPIDO */}
+                        <div 
+                            onClick={() => onUpdateTheme({ ...currentTheme, processingMode: 'fast' })}
+                            className={clsx(
+                                "cursor-pointer p-4 rounded-xl border-2 transition-all flex items-start gap-4",
+                                currentTheme.processingMode === 'fast'
+                                    ? "border-blue-500 bg-blue-50" 
+                                    : "border-slate-200 bg-white hover:border-blue-200"
+                            )}
+                        >
+                            <div className="p-2 bg-blue-100 text-blue-600 rounded-lg">
+                                <Zap size={24} />
+                            </div>
+                            <div>
+                                <h4 className="font-bold text-slate-800">Modo Rápido / Pro</h4>
+                                <p className="text-xs text-slate-500 mt-1">
+                                    Máxima velocidad. Requiere que tu API Key tenga facturación habilitada en Google Cloud (Pago por uso).
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* 2. APARIENCIA */}
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
                     <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2">
                         <Palette className={`text-${currentTheme.primaryColor}-500`} />
@@ -119,7 +175,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, current
                     </div>
                 </div>
 
-                {/* 2. OPCIONES DEL SISTEMA */}
+                {/* 3. OPCIONES DEL SISTEMA */}
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
                     <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2">
                         <Power className={`text-${currentTheme.primaryColor}-500`} />
@@ -158,7 +214,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, current
                     </div>
                 </div>
 
-                {/* 3. GESTIÓN DE USUARIOS (Solo Admin) */}
+                {/* 4. GESTIÓN DE USUARIOS (Solo Admin) */}
                 {currentUser.role === 'admin' && (
                     <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-100">
                         <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2">

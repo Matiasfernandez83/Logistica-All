@@ -1,3 +1,4 @@
+
 export interface TruckRecord {
   id: string;
   patente: string;
@@ -67,6 +68,7 @@ export interface User {
 export interface ThemeSettings {
     primaryColor: 'blue' | 'green' | 'purple' | 'slate' | 'orange';
     fontFamily: 'inter' | 'roboto' | 'mono';
+    processingMode?: 'free' | 'fast'; // 'free' adds delay to save costs/quota, 'fast' ignores limits
 }
 
 export interface AppConfig {
