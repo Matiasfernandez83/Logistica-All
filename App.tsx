@@ -8,12 +8,15 @@ import { ReportsView } from './components/ReportsView';
 import { SettingsView } from './components/SettingsView';
 import { DetailModal } from './components/DetailModal';
 import { LoginScreen } from './components/LoginScreen';
-import { UploadCloud, X, FileSpreadsheet, FileText, Loader2, AlertCircle, Database, CheckCircle2 } from 'lucide-react';
+import { UploadCloud, X, FileSpreadsheet, FileText, Loader2, AlertCircle, Database, CheckCircle2, ArrowRightLeft, FileJson, Download } from 'lucide-react';
 import { TruckRecord, ProcessingStatus, FileType, FleetRecord, View, UploadedFile, ModalData, User, ThemeSettings } from './types';
 import { parseExcelToCSV, fileToBase64, parseExcelToJSON } from './utils/excelParser';
-import { processDocuments } from './services/geminiService';
+import { processDocuments, convertPdfToData } from './services/geminiService';
 import { getRecords, saveRecords, getFleet, saveFleet, saveFiles, clearRecords, getTheme, saveTheme } from './utils/storage';
 import clsx from 'clsx';
+import * as XLSX from 'xlsx';
+import { jsPDF } from 'jspdf';
+import 'jspdf-autotable';
 
 function App() {
   // --- AUTH & THEME STATE ---
@@ -28,6 +31,14 @@ function App() {
   const [records, setRecords] = useState<TruckRecord[]>([]);
   const [fleetDb, setFleetDb] = useState<FleetRecord[]>([]);
   const [files, setFiles] = useState<File[]>([]);
+  
+  // State for Import View Tabs
+  const [importTab, setImportTab] = useState<'process' | 'convert'>('process');
+  
+  // State for Converter
+  const [convertFile, setConvertFile] = useState<File | null>(null);
+  const [isConverting, setIsConverting] = useState(false);
+
   const [status, setStatus] = useState<ProcessingStatus>({
     isProcessing: false,
     error: null,
@@ -43,6 +54,7 @@ function App() {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dbInputRef = useRef<HTMLInputElement>(null);
+  const convertInputRef = useRef<HTMLInputElement>(null);
 
   // --- INITIALIZATION ---
   useEffect(() => {
@@ -129,6 +141,67 @@ function App() {
           };
       });
   };
+
+  // --- LOGIC: CONVERTER (PDF <-> EXCEL) ---
+  const handleConversion = async () => {
+      if (!convertFile) return;
+      setIsConverting(true);
+
+      try {
+          // EXCEL TO PDF
+          if (convertFile.name.endsWith('.xlsx') || convertFile.name.endsWith('.xls') || convertFile.name.endsWith('.csv')) {
+              const jsonData = await parseExcelToJSON(convertFile);
+              
+              const doc = new jsPDF();
+              doc.setFontSize(16);
+              doc.text(`Conversión: ${convertFile.name}`, 14, 20);
+              doc.setFontSize(10);
+              doc.text(`Generado por LogísticaAI - ${new Date().toLocaleDateString()}`, 14, 28);
+              
+              if (jsonData.length > 0) {
+                  const headers = Object.keys(jsonData[0]);
+                  const body = jsonData.map((row: any) => Object.values(row));
+                  
+                  (doc as any).autoTable({
+                      head: [headers],
+                      body: body,
+                      startY: 35,
+                      theme: 'grid',
+                      styles: { fontSize: 8 },
+                      headStyles: { fillColor: theme.primaryColor === 'blue' ? [37, 99, 235] : [100, 100, 100] }
+                  });
+              }
+
+              doc.save(`${convertFile.name.split('.')[0]}_convertido.pdf`);
+              alert("Archivo convertido a PDF exitosamente.");
+          } 
+          // PDF TO EXCEL (Via Gemini)
+          else if (convertFile.name.endsWith('.pdf')) {
+              const base64 = await fileToBase64(convertFile);
+              const data = await convertPdfToData([{ mimeType: 'application/pdf', data: base64 }]);
+              
+              if (data && data.length > 0) {
+                  const ws = XLSX.utils.json_to_sheet(data);
+                  const wb = XLSX.utils.book_new();
+                  XLSX.utils.book_append_sheet(wb, ws, "Datos Extraidos");
+                  XLSX.writeFile(wb, `${convertFile.name.split('.')[0]}_convertido.xlsx`);
+                  alert("Archivo convertido a Excel exitosamente.");
+              } else {
+                  alert("No se pudieron extraer datos tabulares del PDF.");
+              }
+          } else {
+              alert("Formato no soportado para conversión.");
+          }
+
+      } catch (e: any) {
+          console.error("Error converting file", e);
+          alert(`Error en conversión: ${e.message}`);
+      } finally {
+          setIsConverting(false);
+          setConvertFile(null);
+      }
+  };
+
 
   // --- LOGIC: FILE PROCESSING ---
   const handleProcess = async () => {
@@ -359,100 +432,225 @@ function App() {
               return <ReportsView data={records} />;
           case 'import':
               return (
-                  <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                     <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
-                        <h3 className={`text-lg font-bold text-slate-800 mb-4 flex items-center gap-2`}>
-                            <UploadCloud size={20} className={`text-${theme.primaryColor}-500`}/>
-                            Cargar Nuevos Archivos
-                        </h3>
-                        <div className={`border-2 border-dashed border-slate-300 rounded-lg p-12 flex flex-col items-center justify-center bg-slate-50 hover:bg-${theme.primaryColor}-50 transition-colors cursor-pointer`}
-                            onClick={() => fileInputRef.current?.click()}>
-                            <input 
-                                type="file" 
-                                multiple 
-                                ref={fileInputRef} 
-                                className="hidden" 
-                                accept=".pdf,.xlsx,.xls,.csv"
-                                onChange={handleFileSelect}
-                            />
-                            <div className={`p-4 bg-${theme.primaryColor}-100 text-${theme.primaryColor}-600 rounded-full mb-4`}>
-                                <UploadCloud size={32} />
-                            </div>
-                            <p className="text-lg text-slate-700 font-medium mb-2">Arrastra archivos o haz clic para subir</p>
-                            <p className="text-slate-400">Soporta PDF y Excel (Carga Múltiple)</p>
-                        </div>
-
-                        {files.length > 0 && (
-                            <div className="mt-6">
-                                <p className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3">Cola de procesamiento ({files.length})</p>
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-6 max-h-60 overflow-y-auto pr-2">
-                                    {files.map((file, idx) => (
-                                        <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-lg">
-                                            <div className="flex items-center gap-3 overflow-hidden">
-                                                {file.name.endsWith('.pdf') ? (
-                                                    <FileText className="text-red-500 flex-shrink-0" size={20} />
-                                                ) : (
-                                                    <FileSpreadsheet className="text-green-600 flex-shrink-0" size={20} />
-                                                )}
-                                                <span className="text-sm font-medium truncate text-slate-700">{file.name}</span>
-                                            </div>
-                                            <button 
-                                                onClick={() => removeFile(idx)} 
-                                                disabled={status.isProcessing}
-                                                className="text-slate-400 hover:text-red-500 p-1 disabled:opacity-50"
-                                            >
-                                                <X size={16} />
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div>
-                                <button 
-                                    onClick={handleProcess}
-                                    disabled={status.isProcessing}
-                                    className={clsx(
-                                        "w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-bold text-white text-lg transition-all shadow-md",
-                                        status.isProcessing ? "bg-slate-400 cursor-not-allowed" : `bg-${theme.primaryColor}-600 hover:bg-${theme.primaryColor}-700 hover:shadow-${theme.primaryColor}-200`
-                                    )}
-                                >
-                                    {status.isProcessing ? (
-                                        <>
-                                            <Loader2 className="animate-spin" size={20} />
-                                            <span>Procesando archivo {status.processedCount! + 1} de {status.totalCount}...</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <span>Iniciar Unificación Masiva</span>
-                                            {theme.processingMode === 'free' && <span className="text-xs bg-white/20 px-2 py-0.5 rounded ml-2 font-normal">Modo Gratuito (Lento)</span>}
-                                        </>
-                                    )}
-                                </button>
-                                
-                                {status.isProcessing && (
-                                    <div className="w-full bg-slate-200 rounded-full h-2.5 mt-4">
-                                        <div 
-                                            className={`bg-${theme.primaryColor}-600 h-2.5 rounded-full transition-all duration-300`} 
-                                            style={{ width: `${(status.processedCount! / status.totalCount!) * 100}%` }}
-                                        ></div>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                         {status.error && (
-                            <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-lg flex items-start gap-2 border border-red-100 animate-in slide-in-from-top-2">
-                                <AlertCircle size={20} className="flex-shrink-0 mt-0.5" />
-                                <div className="flex-1">
-                                    <p className="font-bold text-sm">Ocurrieron errores:</p>
-                                    <p className="text-sm break-all">{status.error}</p>
-                                </div>
-                            </div>
-                        )}
-                        {status.success && !status.error && (
-                            <div className="mt-4 p-4 bg-green-50 text-green-700 rounded-lg flex items-center gap-2 border border-green-100">
-                                <CheckCircle2 size={20} />
-                                <p>Proceso completado exitosamente.</p>
-                            </div>
-                        )}
+                  <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                     
+                     {/* TAB NAVIGATION */}
+                     <div className="flex p-1 bg-white rounded-xl shadow-sm border border-slate-100 w-fit">
+                        <button 
+                            onClick={() => setImportTab('process')}
+                            className={clsx(
+                                "px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
+                                importTab === 'process' 
+                                    ? `bg-${theme.primaryColor}-50 text-${theme.primaryColor}-700 shadow-sm` 
+                                    : "text-slate-500 hover:text-slate-700"
+                            )}
+                        >
+                            <Database size={16} /> Procesamiento ERP
+                        </button>
+                        <button 
+                            onClick={() => setImportTab('convert')}
+                            className={clsx(
+                                "px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
+                                importTab === 'convert' 
+                                    ? `bg-${theme.primaryColor}-50 text-${theme.primaryColor}-700 shadow-sm` 
+                                    : "text-slate-500 hover:text-slate-700"
+                            )}
+                        >
+                            <ArrowRightLeft size={16} /> Conversor de Archivos
+                        </button>
                      </div>
+
+                     {importTab === 'process' ? (
+                         // --- EXISTING IMPORT VIEW ---
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                            <h3 className={`text-lg font-bold text-slate-800 mb-4 flex items-center gap-2`}>
+                                <UploadCloud size={20} className={`text-${theme.primaryColor}-500`}/>
+                                Cargar Nuevos Archivos (ERP)
+                            </h3>
+                            <div className={`border-2 border-dashed border-slate-300 rounded-lg p-12 flex flex-col items-center justify-center bg-slate-50 hover:bg-${theme.primaryColor}-50 transition-colors cursor-pointer`}
+                                onClick={() => fileInputRef.current?.click()}>
+                                <input 
+                                    type="file" 
+                                    multiple 
+                                    ref={fileInputRef} 
+                                    className="hidden" 
+                                    accept=".pdf,.xlsx,.xls,.csv"
+                                    onChange={handleFileSelect}
+                                />
+                                <div className={`p-4 bg-${theme.primaryColor}-100 text-${theme.primaryColor}-600 rounded-full mb-4`}>
+                                    <UploadCloud size={32} />
+                                </div>
+                                <p className="text-lg text-slate-700 font-medium mb-2">Arrastra archivos o haz clic para subir</p>
+                                <p className="text-slate-400">Soporta PDF y Excel (Carga Múltiple)</p>
+                            </div>
+
+                            {files.length > 0 && (
+                                <div className="mt-6">
+                                    <p className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3">Cola de procesamiento ({files.length})</p>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-6 max-h-60 overflow-y-auto pr-2">
+                                        {files.map((file, idx) => (
+                                            <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                                                <div className="flex items-center gap-3 overflow-hidden">
+                                                    {file.name.endsWith('.pdf') ? (
+                                                        <FileText className="text-red-500 flex-shrink-0" size={20} />
+                                                    ) : (
+                                                        <FileSpreadsheet className="text-green-600 flex-shrink-0" size={20} />
+                                                    )}
+                                                    <span className="text-sm font-medium truncate text-slate-700">{file.name}</span>
+                                                </div>
+                                                <button 
+                                                    onClick={() => removeFile(idx)} 
+                                                    disabled={status.isProcessing}
+                                                    className="text-slate-400 hover:text-red-500 p-1 disabled:opacity-50"
+                                                >
+                                                    <X size={16} />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <button 
+                                        onClick={handleProcess}
+                                        disabled={status.isProcessing}
+                                        className={clsx(
+                                            "w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-bold text-white text-lg transition-all shadow-md",
+                                            status.isProcessing ? "bg-slate-400 cursor-not-allowed" : `bg-${theme.primaryColor}-600 hover:bg-${theme.primaryColor}-700 hover:shadow-${theme.primaryColor}-200`
+                                        )}
+                                    >
+                                        {status.isProcessing ? (
+                                            <>
+                                                <Loader2 className="animate-spin" size={20} />
+                                                <span>Procesando archivo {status.processedCount! + 1} de {status.totalCount}...</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <span>Iniciar Unificación Masiva</span>
+                                                {theme.processingMode === 'free' && <span className="text-xs bg-white/20 px-2 py-0.5 rounded ml-2 font-normal">Modo Gratuito (Lento)</span>}
+                                            </>
+                                        )}
+                                    </button>
+                                    
+                                    {status.isProcessing && (
+                                        <div className="w-full bg-slate-200 rounded-full h-2.5 mt-4">
+                                            <div 
+                                                className={`bg-${theme.primaryColor}-600 h-2.5 rounded-full transition-all duration-300`} 
+                                                style={{ width: `${(status.processedCount! / status.totalCount!) * 100}%` }}
+                                            ></div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            {status.error && (
+                                <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-lg flex items-start gap-2 border border-red-100 animate-in slide-in-from-top-2">
+                                    <AlertCircle size={20} className="flex-shrink-0 mt-0.5" />
+                                    <div className="flex-1">
+                                        <p className="font-bold text-sm">Ocurrieron errores:</p>
+                                        <p className="text-sm break-all">{status.error}</p>
+                                    </div>
+                                </div>
+                            )}
+                            {status.success && !status.error && (
+                                <div className="mt-4 p-4 bg-green-50 text-green-700 rounded-lg flex items-center gap-2 border border-green-100">
+                                    <CheckCircle2 size={20} />
+                                    <p>Proceso completado exitosamente.</p>
+                                </div>
+                            )}
+                        </div>
+                     ) : (
+                        // --- NEW CONVERTER VIEW ---
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                            <h3 className={`text-lg font-bold text-slate-800 mb-4 flex items-center gap-2`}>
+                                <ArrowRightLeft size={20} className={`text-${theme.primaryColor}-500`}/>
+                                Transformar Archivos
+                            </h3>
+                            <p className="text-sm text-slate-500 mb-6">
+                                Convierte PDFs a Excel (extracción inteligente de tablas) o Excel a PDF (generación de documentos).
+                                <br/><span className="text-xs text-orange-500">Nota: La conversión de PDF a Excel usa IA y puede tomar unos segundos.</span>
+                            </p>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                {/* INPUT AREA */}
+                                <div>
+                                    <div className={`border-2 border-dashed border-slate-300 rounded-lg p-8 flex flex-col items-center justify-center bg-slate-50 hover:bg-${theme.primaryColor}-50 transition-colors cursor-pointer h-64`}
+                                        onClick={() => convertInputRef.current?.click()}>
+                                        <input 
+                                            type="file" 
+                                            ref={convertInputRef} 
+                                            className="hidden" 
+                                            accept=".pdf,.xlsx,.xls,.csv"
+                                            onChange={(e) => {
+                                                if (e.target.files && e.target.files[0]) setConvertFile(e.target.files[0]);
+                                            }}
+                                        />
+                                        
+                                        {!convertFile ? (
+                                            <>
+                                                <div className={`p-4 bg-slate-200 text-slate-500 rounded-full mb-4`}>
+                                                    <FileJson size={32} />
+                                                </div>
+                                                <p className="text-base text-slate-700 font-medium mb-1">Seleccionar Archivo</p>
+                                                <p className="text-xs text-slate-400">PDF o Excel</p>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <div className={`p-4 bg-${theme.primaryColor}-100 text-${theme.primaryColor}-600 rounded-full mb-4`}>
+                                                    {convertFile.name.endsWith('.pdf') ? <FileText size={32} /> : <FileSpreadsheet size={32} />}
+                                                </div>
+                                                <p className="text-base font-bold text-slate-800 text-center break-all px-4">{convertFile.name}</p>
+                                                <button 
+                                                    onClick={(e) => { e.stopPropagation(); setConvertFile(null); }}
+                                                    className="mt-2 text-xs text-red-500 hover:underline"
+                                                >
+                                                    Quitar
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* ACTION AREA */}
+                                <div className="flex flex-col justify-center space-y-4">
+                                    <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
+                                        <h4 className="font-bold text-slate-700 mb-2">Acción Detectada:</h4>
+                                        {convertFile ? (
+                                            convertFile.name.endsWith('.pdf') ? (
+                                                <div className="flex items-center gap-2 text-blue-600 font-bold">
+                                                    <FileText size={18}/> PDF <ArrowRightLeft size={14}/> <FileSpreadsheet size={18}/> Excel
+                                                </div>
+                                            ) : (
+                                                <div className="flex items-center gap-2 text-green-600 font-bold">
+                                                     <FileSpreadsheet size={18}/> Excel <ArrowRightLeft size={14}/> <FileText size={18}/> PDF
+                                                </div>
+                                            )
+                                        ) : (
+                                            <p className="text-slate-400 text-sm italic">Sube un archivo para ver opciones...</p>
+                                        )}
+                                    </div>
+
+                                    <button 
+                                        onClick={handleConversion}
+                                        disabled={!convertFile || isConverting}
+                                        className={clsx(
+                                            "w-full flex items-center justify-center gap-2 px-6 py-4 rounded-xl font-bold text-white text-lg transition-all shadow-md",
+                                            (!convertFile || isConverting) ? "bg-slate-300 cursor-not-allowed" : `bg-${theme.primaryColor}-600 hover:bg-${theme.primaryColor}-700`
+                                        )}
+                                    >
+                                        {isConverting ? (
+                                            <>
+                                                <Loader2 className="animate-spin" size={20} />
+                                                <span>Convirtiendo...</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Download size={20} />
+                                                <span>Convertir y Descargar</span>
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                     )}
+
                   </div>
               );
           case 'dashboard':

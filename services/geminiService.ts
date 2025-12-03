@@ -136,3 +136,61 @@ export const processDocuments = async (
   
   throw new Error(`Error de conexión: ${lastError.message}`);
 };
+
+/**
+ * GENERIC CONVERSION: PDF TO RAW TABLE DATA
+ * Used for the "Converter" feature.
+ */
+export const convertPdfToData = async (
+    contents: { mimeType: string; data: string }[]
+): Promise<any[]> => {
+    const ai = getAiClient();
+    
+    // Generic Schema for simple Key-Value objects
+    const genericSchema: Schema = {
+        type: Type.ARRAY,
+        items: {
+            type: Type.OBJECT,
+            properties: {
+                Columna1: { type: Type.STRING },
+                Columna2: { type: Type.STRING },
+                Columna3: { type: Type.STRING },
+                Columna4: { type: Type.STRING },
+                Columna5: { type: Type.STRING },
+            }
+        }
+    };
+
+    const prompt = `
+        Analiza este documento PDF/Imagen. 
+        Tu tarea es convertir CUALQUIER tabla que veas en un formato JSON plano.
+        No intentes interpretar los datos como "camiones", simplemente extrae el texto de las filas y columnas tal cual aparecen.
+        Trata de mantener los encabezados si es posible en la primera fila, o usa claves genéricas.
+        Devuelve un array de objetos JSON.
+    `;
+
+    const requestParts = [
+        ...contents.map(c => ({ inlineData: { mimeType: c.mimeType, data: c.data } })),
+        { text: prompt }
+    ];
+
+    const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: { parts: requestParts },
+        config: {
+            responseMimeType: "application/json",
+            // We don't enforce a strict schema here to allow flexibility, 
+            // but requesting JSON mimeType helps.
+        },
+    });
+
+    const text = response.text;
+    if (!text) return [];
+
+    try {
+        return JSON.parse(text);
+    } catch (e) {
+        console.error("Error parsing generic conversion JSON", e);
+        return [];
+    }
+};
