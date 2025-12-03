@@ -102,6 +102,7 @@ export const saveFiles = async (files: UploadedFile[]): Promise<void> => {
     const tx = db.transaction(STORES.FILES, 'readwrite');
     const store = tx.objectStore(STORES.FILES);
     files.forEach(file => {
+        // If ID is already set, use it, otherwise generate one
         const fileToSave = {
             ...file,
             id: file.id || `file-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -120,6 +121,17 @@ export const getFiles = async (): Promise<UploadedFile[]> => {
         const store = tx.objectStore(STORES.FILES);
         const request = store.getAll();
         request.onsuccess = () => resolve(request.result.sort((a: any, b: any) => b.timestamp - a.timestamp));
+    });
+};
+
+export const getFileById = async (id: string): Promise<UploadedFile | undefined> => {
+    const db = await openDB();
+    return new Promise((resolve) => {
+        const tx = db.transaction(STORES.FILES, 'readonly');
+        const store = tx.objectStore(STORES.FILES);
+        const request = store.get(id);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => resolve(undefined);
     });
 };
 

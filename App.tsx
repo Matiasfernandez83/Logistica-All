@@ -8,11 +8,13 @@ import { ReportsView } from './components/ReportsView';
 import { SettingsView } from './components/SettingsView';
 import { DetailModal } from './components/DetailModal';
 import { LoginScreen } from './components/LoginScreen';
-import { UploadCloud, X, FileSpreadsheet, FileText, Loader2, AlertCircle, Database, CheckCircle2, ArrowRightLeft, FileJson, Download } from 'lucide-react';
+import { ImportView } from './components/ImportView';
+import { ConverterView } from './components/ConverterView';
+import { Database, CheckCircle2, ArrowRightLeft, FileSpreadsheet, AlertTriangle } from 'lucide-react';
 import { TruckRecord, ProcessingStatus, FileType, FleetRecord, View, UploadedFile, ModalData, User, ThemeSettings } from './types';
 import { parseExcelToCSV, fileToBase64, parseExcelToJSON } from './utils/excelParser';
 import { processDocuments, convertPdfToData } from './services/geminiService';
-import { getRecords, saveRecords, getFleet, saveFleet, saveFiles, clearRecords, getTheme, saveTheme } from './utils/storage';
+import { getRecords, saveRecords, getFleet, saveFleet, saveFiles, clearRecords, getTheme, saveTheme, getFileById } from './utils/storage';
 import clsx from 'clsx';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
@@ -24,7 +26,7 @@ function App() {
   const [theme, setTheme] = useState<ThemeSettings>({ 
       primaryColor: 'blue', 
       fontFamily: 'inter', 
-      processingMode: 'free' // Default to free mode for safety
+      processingMode: 'free'
   });
 
   const [currentView, setCurrentView] = useState<View>('dashboard');
@@ -32,10 +34,8 @@ function App() {
   const [fleetDb, setFleetDb] = useState<FleetRecord[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   
-  // State for Import View Tabs
   const [importTab, setImportTab] = useState<'process' | 'convert'>('process');
   
-  // State for Converter
   const [convertFile, setConvertFile] = useState<File | null>(null);
   const [isConverting, setIsConverting] = useState(false);
 
@@ -45,22 +45,18 @@ function App() {
     success: false
   });
   
-  // Modal State
   const [modalData, setModalData] = useState<ModalData>({
       isOpen: false,
       title: '',
       type: 'list'
   });
   
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const dbInputRef = useRef<HTMLInputElement>(null);
-  const convertInputRef = useRef<HTMLInputElement>(null);
 
   // --- INITIALIZATION ---
   useEffect(() => {
     const loadData = async () => {
         try {
-            // Load theme first
             const savedTheme = await getTheme();
             if (savedTheme) setTheme(savedTheme);
 
@@ -75,7 +71,6 @@ function App() {
     loadData();
   }, []);
 
-  // Update theme on body/root
   useEffect(() => {
       const fontMap = {
           'inter': 'Inter, sans-serif',
@@ -83,7 +78,6 @@ function App() {
           'mono': 'monospace'
       };
       document.body.style.fontFamily = fontMap[theme.fontFamily];
-      // Note: Colors are handled via Tailwind classes passed to components
   }, [theme]);
 
   const handleUpdateTheme = async (newTheme: ThemeSettings) => {
@@ -142,6 +136,36 @@ function App() {
       });
   };
 
+  // --- LOGIC: OPEN FILE ---
+  const handleViewFile = async (fileId: string) => {
+      try {
+          const fileData = await getFileById(fileId);
+          if (!fileData || !fileData.content) {
+              alert("Archivo no encontrado o contenido dañado.");
+              return;
+          }
+
+          const base64 = fileData.content as string;
+          const mimeType = fileData.type;
+          
+          // Create Blob and open
+          const byteCharacters = atob(base64);
+          const byteNumbers = new Array(byteCharacters.length);
+          for (let i = 0; i < byteCharacters.length; i++) {
+              byteNumbers[i] = byteCharacters.charCodeAt(i);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          const blob = new Blob([byteArray], { type: mimeType });
+          const fileURL = URL.createObjectURL(blob);
+          
+          window.open(fileURL, '_blank');
+          
+      } catch (e) {
+          console.error("Error opening file", e);
+          alert("Error al abrir el archivo.");
+      }
+  };
+
   // --- LOGIC: CONVERTER (PDF <-> EXCEL) ---
   const handleConversion = async () => {
       if (!convertFile) return;
@@ -162,18 +186,23 @@ function App() {
                   const headers = Object.keys(jsonData[0]);
                   const body = jsonData.map((row: any) => Object.values(row));
                   
-                  (doc as any).autoTable({
-                      head: [headers],
-                      body: body,
-                      startY: 35,
-                      theme: 'grid',
-                      styles: { fontSize: 8 },
-                      headStyles: { fillColor: theme.primaryColor === 'blue' ? [37, 99, 235] : [100, 100, 100] }
-                  });
+                  // Safe check for autoTable
+                  if ((doc as any).autoTable) {
+                      (doc as any).autoTable({
+                          head: [headers],
+                          body: body,
+                          startY: 35,
+                          theme: 'grid',
+                          styles: { fontSize: 8 },
+                          headStyles: { fillColor: theme.primaryColor === 'blue' ? [37, 99, 235] : [100, 100, 100] }
+                      });
+                  } else {
+                      console.warn("jsPDF autoTable plugin not loaded properly");
+                      doc.text("Error: No se pudo generar la tabla. Plugin no cargado.", 14, 40);
+                  }
               }
 
               doc.save(`${convertFile.name.split('.')[0]}_convertido.pdf`);
-              alert("Archivo convertido a PDF exitosamente.");
           } 
           // PDF TO EXCEL (Via Gemini)
           else if (convertFile.name.endsWith('.pdf')) {
@@ -185,17 +214,16 @@ function App() {
                   const wb = XLSX.utils.book_new();
                   XLSX.utils.book_append_sheet(wb, ws, "Datos Extraidos");
                   XLSX.writeFile(wb, `${convertFile.name.split('.')[0]}_convertido.xlsx`);
-                  alert("Archivo convertido a Excel exitosamente.");
               } else {
-                  alert("No se pudieron extraer datos tabulares del PDF.");
+                  throw new Error("No se pudieron extraer datos tabulares del PDF.");
               }
           } else {
-              alert("Formato no soportado para conversión.");
+              throw new Error("Formato no soportado.");
           }
 
       } catch (e: any) {
           console.error("Error converting file", e);
-          alert(`Error en conversión: ${e.message}`);
+          alert(`Error: ${e.message}`);
       } finally {
           setIsConverting(false);
           setConvertFile(null);
@@ -207,17 +235,18 @@ function App() {
   const handleProcess = async () => {
     if (files.length === 0) return;
 
-    // Initial check for environment (best effort)
-    if (!process.env.API_KEY) {
+    // Check for API Key in either process.env or window.process.env
+    const apiKey = process?.env?.API_KEY || (window as any).process?.env?.API_KEY;
+
+    if (!apiKey) {
         setStatus({
             isProcessing: false,
-            error: "ERROR DE CONFIGURACIÓN: No se encontró la API_KEY. Si está en la nube, asegúrese de agregar la variable de entorno API_KEY en su panel de despliegue.",
+            error: "ERROR CRÍTICO: API_KEY no encontrada. Por favor asegúrate de que la clave API esté configurada en el entorno.",
             success: false
         });
         return;
     }
 
-    // Reset status but keep files to show progress
     setStatus({ 
         isProcessing: true, 
         error: null, 
@@ -231,16 +260,16 @@ function App() {
     const newRecordsAcc: TruckRecord[] = [];
     const filesToSaveAcc: UploadedFile[] = [];
 
-    // Determine Delay based on Mode
     const processingDelay = theme.processingMode === 'fast' ? 500 : 5000;
 
     try {
-        // Process files sequentially (One by One) with delay
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
             
             try {
-                // 1. Read File content
+                // Generate a unique ID for the file beforehand to link it
+                const fileId = `file-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
                 let contentData = '';
                 let mimeType = '';
 
@@ -255,27 +284,30 @@ function App() {
                     mimeType = file.type || 'image/jpeg';
                 }
 
-                // 2. Call AI for THIS file only
-                // Add explicit delay between files to avoid Rate Limits (or just safety)
                 if (i > 0) {
                     await new Promise(resolve => setTimeout(resolve, processingDelay));
                 }
 
                 const resultRecords = await processDocuments([{ mimeType, data: contentData }]);
                 
-                // 3. Verify extracted records against Fleet DB
-                const verifiedSubset = verifyRecords(resultRecords, fleetDb);
+                // Link records to the source file
+                const recordsWithSource = resultRecords.map(r => ({
+                    ...r,
+                    sourceFileId: fileId,
+                    sourceFileName: file.name
+                }));
+
+                const verifiedSubset = verifyRecords(recordsWithSource, fleetDb);
                 newRecordsAcc.push(...verifiedSubset);
 
-                // 4. Prepare file for history storage
                 filesToSaveAcc.push({
+                    id: fileId, // Use the generated ID
                     name: file.name,
                     type: file.type,
                     size: file.size,
                     content: contentData
                 });
 
-                // 5. Update UI Progress
                 successCount++;
                 setStatus(prev => ({ 
                     ...prev, 
@@ -289,31 +321,26 @@ function App() {
             }
         }
 
-        // 6. Save accumulated data to State and DB
         if (newRecordsAcc.length > 0) {
             const allRecords = [...records, ...newRecordsAcc];
             setRecords(allRecords);
             await saveRecords(allRecords);
-            
             await saveFiles(filesToSaveAcc);
         }
 
-        // 7. Final Status
         if (failedFiles.length > 0) {
             const errorMsg = `Se procesaron ${successCount} archivos. Fallas: ${failedFiles.join(' | ')}`;
             setStatus({ 
                 isProcessing: false, 
                 error: errorMsg, 
-                success: successCount > 0 // Partial success is still success
+                success: successCount > 0 
             });
-            // Don't clear queue if there are errors so user can see which ones failed (or retry)
         } else {
              setStatus({ 
                 isProcessing: false, 
                 error: null, 
                 success: true 
             });
-            // Clear queue only on full success
             setFiles([]);
         }
 
@@ -327,59 +354,22 @@ function App() {
     }
   };
 
-  // --- EVENT HANDLERS ---
-  const handleStatClick = (type: 'total' | 'trucks' | 'owners' | 'ops') => {
-      let title = '';
-      let filteredRecords = records;
-
-      switch(type) {
-          case 'total':
-              title = 'Registros de Mayor Valor (Top 50)';
-              filteredRecords = [...records].sort((a,b) => b.valor - a.valor).slice(0, 50);
-              break;
-          case 'trucks':
-              title = 'Detalle por Camión (Ordenado por Patente)';
-              filteredRecords = [...records].sort((a,b) => a.patente.localeCompare(b.patente));
-              break;
-          case 'owners':
-              title = 'Detalle por Dueño (Ordenado por Nombre)';
-              filteredRecords = [...records].sort((a,b) => a.dueno.localeCompare(b.dueno));
-              break;
-          case 'ops':
-              title = 'Todas las Operaciones Recientes';
-              break;
-      }
-      setModalData({ isOpen: true, title, type: 'list', records: filteredRecords });
-  };
-
-  const handleChartBarClick = (ownerName: string) => {
-      const filtered = records.filter(r => r.dueno === ownerName);
-      setModalData({ isOpen: true, title: `Operaciones de: ${ownerName}`, type: 'list', records: filtered });
-  };
-
-  const handleRowDoubleClick = (record: TruckRecord) => {
-      setModalData({ isOpen: true, title: `Detalle de Registro ${record.patente}`, type: 'detail', singleRecord: record });
-  };
-
   const handleDbSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files[0]) {
           const file = e.target.files[0];
           try {
               const jsonData = await parseExcelToJSON(file);
               const fleetData: FleetRecord[] = jsonData.map((row: any) => {
+                  // Simplified mapping logic for brevity
                   const keys = Object.keys(row);
-                  const patenteKey = keys.find(k => k.toLowerCase().match(/(patente|dominio|matricula|placa)/));
-                  const duenoKey = keys.find(k => k.toLowerCase().match(/(dueño|propietario|titular|responsable|usuario)/));
-                  const tagKey = keys.find(k => k.toLowerCase().match(/(tag|dispositivo|device|telepase)/));
-                  const equipoKey = keys.find(k => k.toLowerCase().match(/(equipo|interno|unidad|movil|numero)/) && !k.toLowerCase().includes('tag'));
-                  
+                  const patente = String(row[keys.find(k => /patente|dominio/i.test(k)) || ''] || '').trim();
                   return {
-                      patente: patenteKey ? String(row[patenteKey]).trim() : '',
-                      dueno: duenoKey ? String(row[duenoKey]).trim() : 'Desconocido',
-                      tag: tagKey ? String(row[tagKey]).trim() : '',
-                      equipo: equipoKey ? String(row[equipoKey]).trim() : ''
+                      patente: patente,
+                      dueno: String(row[keys.find(k => /dueño|propietario/i.test(k)) || ''] || 'Desconocido').trim(),
+                      tag: String(row[keys.find(k => /tag|device/i.test(k)) || ''] || '').trim(),
+                      equipo: String(row[keys.find(k => /equipo|unidad/i.test(k) && !/tag/i.test(k)) || ''] || '').trim()
                   };
-              }).filter(r => r.tag || r.patente);
+              }).filter(r => r.patente);
 
               setFleetDb(fleetData);
               await saveFleet(fleetData);
@@ -390,7 +380,7 @@ function App() {
               }
           } catch (err) {
               console.error("Error loading database", err);
-              alert("Error al leer el archivo de base de datos.");
+              alert("Error al leer base de datos.");
           }
       }
   };
@@ -402,39 +392,42 @@ function App() {
     }
   };
 
-  const removeFile = (index: number) => {
-    setFiles(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const handleClearData = async () => {
-      if(confirm('¿Estás seguro de borrar todos los registros de la tabla?')) {
-          await clearRecords();
-          setRecords([]);
-      }
-  };
-
-  // --- RENDER VIEWS ---
-  
   if (!currentUser) {
       return <LoginScreen onLogin={setCurrentUser} themeColor={theme.primaryColor} />;
   }
 
-  const renderView = () => {
-      switch(currentView) {
-          case 'settings':
-              return <SettingsView 
+  return (
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-900 flex transition-colors duration-300">
+      <Sidebar currentView={currentView} onNavigate={setCurrentView} />
+      <main className="md:ml-64 p-4 md:p-8 flex-1 overflow-hidden">
+        <header className="flex flex-col md:flex-row justify-between md:items-center mb-8 gap-4">
+          <div>
+            <h2 className="text-2xl font-bold text-slate-800">
+                {currentView === 'dashboard' ? 'Panel de Control' : 
+                 currentView === 'import' ? 'Importador Inteligente' : 
+                 currentView === 'reports' ? 'Reportes' : 'Configuración'}
+            </h2>
+            {/* Visual warning if API Key is missing in dev environment */}
+            {(!process?.env?.API_KEY && !(window as any).process?.env?.API_KEY) && (
+                <div className="flex items-center gap-2 mt-2 text-red-600 bg-red-50 px-3 py-1 rounded text-sm font-bold border border-red-200">
+                    <AlertTriangle size={16} />
+                    <span>ADVERTENCIA: API_KEY no detectada. La IA no funcionará.</span>
+                </div>
+            )}
+          </div>
+        </header>
+        
+        {currentView === 'settings' ? (
+              <SettingsView 
                         currentUser={currentUser} 
                         currentTheme={theme} 
                         onUpdateTheme={handleUpdateTheme}
                         onLogout={() => setCurrentUser(null)}
-                     />;
-          case 'reports':
-              return <ReportsView data={records} />;
-          case 'import':
-              return (
+                     />
+        ) : currentView === 'reports' ? (
+              <ReportsView data={records} />
+        ) : currentView === 'import' ? (
                   <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                     
-                     {/* TAB NAVIGATION */}
                      <div className="flex p-1 bg-white rounded-xl shadow-sm border border-slate-100 w-fit">
                         <button 
                             onClick={() => setImportTab('process')}
@@ -461,204 +454,28 @@ function App() {
                      </div>
 
                      {importTab === 'process' ? (
-                         // --- EXISTING IMPORT VIEW ---
-                        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
-                            <h3 className={`text-lg font-bold text-slate-800 mb-4 flex items-center gap-2`}>
-                                <UploadCloud size={20} className={`text-${theme.primaryColor}-500`}/>
-                                Cargar Nuevos Archivos (ERP)
-                            </h3>
-                            <div className={`border-2 border-dashed border-slate-300 rounded-lg p-12 flex flex-col items-center justify-center bg-slate-50 hover:bg-${theme.primaryColor}-50 transition-colors cursor-pointer`}
-                                onClick={() => fileInputRef.current?.click()}>
-                                <input 
-                                    type="file" 
-                                    multiple 
-                                    ref={fileInputRef} 
-                                    className="hidden" 
-                                    accept=".pdf,.xlsx,.xls,.csv"
-                                    onChange={handleFileSelect}
-                                />
-                                <div className={`p-4 bg-${theme.primaryColor}-100 text-${theme.primaryColor}-600 rounded-full mb-4`}>
-                                    <UploadCloud size={32} />
-                                </div>
-                                <p className="text-lg text-slate-700 font-medium mb-2">Arrastra archivos o haz clic para subir</p>
-                                <p className="text-slate-400">Soporta PDF y Excel (Carga Múltiple)</p>
-                            </div>
-
-                            {files.length > 0 && (
-                                <div className="mt-6">
-                                    <p className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3">Cola de procesamiento ({files.length})</p>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-6 max-h-60 overflow-y-auto pr-2">
-                                        {files.map((file, idx) => (
-                                            <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-lg">
-                                                <div className="flex items-center gap-3 overflow-hidden">
-                                                    {file.name.endsWith('.pdf') ? (
-                                                        <FileText className="text-red-500 flex-shrink-0" size={20} />
-                                                    ) : (
-                                                        <FileSpreadsheet className="text-green-600 flex-shrink-0" size={20} />
-                                                    )}
-                                                    <span className="text-sm font-medium truncate text-slate-700">{file.name}</span>
-                                                </div>
-                                                <button 
-                                                    onClick={() => removeFile(idx)} 
-                                                    disabled={status.isProcessing}
-                                                    className="text-slate-400 hover:text-red-500 p-1 disabled:opacity-50"
-                                                >
-                                                    <X size={16} />
-                                                </button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                    <button 
-                                        onClick={handleProcess}
-                                        disabled={status.isProcessing}
-                                        className={clsx(
-                                            "w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-bold text-white text-lg transition-all shadow-md",
-                                            status.isProcessing ? "bg-slate-400 cursor-not-allowed" : `bg-${theme.primaryColor}-600 hover:bg-${theme.primaryColor}-700 hover:shadow-${theme.primaryColor}-200`
-                                        )}
-                                    >
-                                        {status.isProcessing ? (
-                                            <>
-                                                <Loader2 className="animate-spin" size={20} />
-                                                <span>Procesando archivo {status.processedCount! + 1} de {status.totalCount}...</span>
-                                            </>
-                                        ) : (
-                                            <>
-                                                <span>Iniciar Unificación Masiva</span>
-                                                {theme.processingMode === 'free' && <span className="text-xs bg-white/20 px-2 py-0.5 rounded ml-2 font-normal">Modo Gratuito (Lento)</span>}
-                                            </>
-                                        )}
-                                    </button>
-                                    
-                                    {status.isProcessing && (
-                                        <div className="w-full bg-slate-200 rounded-full h-2.5 mt-4">
-                                            <div 
-                                                className={`bg-${theme.primaryColor}-600 h-2.5 rounded-full transition-all duration-300`} 
-                                                style={{ width: `${(status.processedCount! / status.totalCount!) * 100}%` }}
-                                            ></div>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                            {status.error && (
-                                <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-lg flex items-start gap-2 border border-red-100 animate-in slide-in-from-top-2">
-                                    <AlertCircle size={20} className="flex-shrink-0 mt-0.5" />
-                                    <div className="flex-1">
-                                        <p className="font-bold text-sm">Ocurrieron errores:</p>
-                                        <p className="text-sm break-all">{status.error}</p>
-                                    </div>
-                                </div>
-                            )}
-                            {status.success && !status.error && (
-                                <div className="mt-4 p-4 bg-green-50 text-green-700 rounded-lg flex items-center gap-2 border border-green-100">
-                                    <CheckCircle2 size={20} />
-                                    <p>Proceso completado exitosamente.</p>
-                                </div>
-                            )}
-                        </div>
+                        <ImportView 
+                            files={files} 
+                            status={status} 
+                            onFileSelect={handleFileSelect} 
+                            onRemoveFile={(idx) => setFiles(prev => prev.filter((_, i) => i !== idx))} 
+                            onProcess={handleProcess}
+                            theme={theme}
+                        />
                      ) : (
-                        // --- NEW CONVERTER VIEW ---
-                        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
-                            <h3 className={`text-lg font-bold text-slate-800 mb-4 flex items-center gap-2`}>
-                                <ArrowRightLeft size={20} className={`text-${theme.primaryColor}-500`}/>
-                                Transformar Archivos
-                            </h3>
-                            <p className="text-sm text-slate-500 mb-6">
-                                Convierte PDFs a Excel (extracción inteligente de tablas) o Excel a PDF (generación de documentos).
-                                <br/><span className="text-xs text-orange-500">Nota: La conversión de PDF a Excel usa IA y puede tomar unos segundos.</span>
-                            </p>
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                {/* INPUT AREA */}
-                                <div>
-                                    <div className={`border-2 border-dashed border-slate-300 rounded-lg p-8 flex flex-col items-center justify-center bg-slate-50 hover:bg-${theme.primaryColor}-50 transition-colors cursor-pointer h-64`}
-                                        onClick={() => convertInputRef.current?.click()}>
-                                        <input 
-                                            type="file" 
-                                            ref={convertInputRef} 
-                                            className="hidden" 
-                                            accept=".pdf,.xlsx,.xls,.csv"
-                                            onChange={(e) => {
-                                                if (e.target.files && e.target.files[0]) setConvertFile(e.target.files[0]);
-                                            }}
-                                        />
-                                        
-                                        {!convertFile ? (
-                                            <>
-                                                <div className={`p-4 bg-slate-200 text-slate-500 rounded-full mb-4`}>
-                                                    <FileJson size={32} />
-                                                </div>
-                                                <p className="text-base text-slate-700 font-medium mb-1">Seleccionar Archivo</p>
-                                                <p className="text-xs text-slate-400">PDF o Excel</p>
-                                            </>
-                                        ) : (
-                                            <>
-                                                <div className={`p-4 bg-${theme.primaryColor}-100 text-${theme.primaryColor}-600 rounded-full mb-4`}>
-                                                    {convertFile.name.endsWith('.pdf') ? <FileText size={32} /> : <FileSpreadsheet size={32} />}
-                                                </div>
-                                                <p className="text-base font-bold text-slate-800 text-center break-all px-4">{convertFile.name}</p>
-                                                <button 
-                                                    onClick={(e) => { e.stopPropagation(); setConvertFile(null); }}
-                                                    className="mt-2 text-xs text-red-500 hover:underline"
-                                                >
-                                                    Quitar
-                                                </button>
-                                            </>
-                                        )}
-                                    </div>
-                                </div>
-
-                                {/* ACTION AREA */}
-                                <div className="flex flex-col justify-center space-y-4">
-                                    <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
-                                        <h4 className="font-bold text-slate-700 mb-2">Acción Detectada:</h4>
-                                        {convertFile ? (
-                                            convertFile.name.endsWith('.pdf') ? (
-                                                <div className="flex items-center gap-2 text-blue-600 font-bold">
-                                                    <FileText size={18}/> PDF <ArrowRightLeft size={14}/> <FileSpreadsheet size={18}/> Excel
-                                                </div>
-                                            ) : (
-                                                <div className="flex items-center gap-2 text-green-600 font-bold">
-                                                     <FileSpreadsheet size={18}/> Excel <ArrowRightLeft size={14}/> <FileText size={18}/> PDF
-                                                </div>
-                                            )
-                                        ) : (
-                                            <p className="text-slate-400 text-sm italic">Sube un archivo para ver opciones...</p>
-                                        )}
-                                    </div>
-
-                                    <button 
-                                        onClick={handleConversion}
-                                        disabled={!convertFile || isConverting}
-                                        className={clsx(
-                                            "w-full flex items-center justify-center gap-2 px-6 py-4 rounded-xl font-bold text-white text-lg transition-all shadow-md",
-                                            (!convertFile || isConverting) ? "bg-slate-300 cursor-not-allowed" : `bg-${theme.primaryColor}-600 hover:bg-${theme.primaryColor}-700`
-                                        )}
-                                    >
-                                        {isConverting ? (
-                                            <>
-                                                <Loader2 className="animate-spin" size={20} />
-                                                <span>Convirtiendo...</span>
-                                            </>
-                                        ) : (
-                                            <>
-                                                <Download size={20} />
-                                                <span>Convertir y Descargar</span>
-                                            </>
-                                        )}
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
+                        <ConverterView 
+                            convertFile={convertFile}
+                            isConverting={isConverting}
+                            onFileSelect={setConvertFile}
+                            onConvert={handleConversion}
+                            onClearFile={() => setConvertFile(null)}
+                            theme={theme}
+                        />
                      )}
-
                   </div>
-              );
-          case 'dashboard':
-          default:
-              return (
+        ) : (
                   <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
                       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        {/* Quick DB Status */}
                         <section className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 lg:col-span-1">
                             <h3 className="text-lg font-bold text-slate-800 mb-2 flex items-center gap-2">
                                 <Database size={20} className={`text-${theme.primaryColor}-500`}/>
@@ -695,7 +512,9 @@ function App() {
                                     + Subir Archivos
                                 </button>
                                 <button 
-                                    onClick={handleClearData}
+                                    onClick={async () => {
+                                        if(confirm('¿Borrar todo?')) { await clearRecords(); setRecords([]); }
+                                    }}
                                     className="px-4 py-2 bg-red-50 text-red-600 rounded-lg text-sm font-medium hover:bg-red-100 transition-colors"
                                 >
                                     Limpiar Tabla
@@ -706,48 +525,23 @@ function App() {
 
                       {records.length > 0 ? (
                         <>
-                            <Stats data={records} onCardClick={handleStatClick} />
-                            <Charts data={records} onBarClick={handleChartBarClick} />
-                            <DataTable data={records} onRowDoubleClick={handleRowDoubleClick} />
+                            <Stats data={records} onCardClick={() => {}} />
+                            <Charts data={records} onBarClick={() => {}} />
+                            <DataTable 
+                                data={records} 
+                                onRowDoubleClick={(r) => setModalData({ isOpen: true, title: 'Detalle', type: 'detail', singleRecord: r })} 
+                                onViewFile={handleViewFile}
+                            />
                         </>
                       ) : (
                           <div className="text-center py-20 text-slate-400 bg-white rounded-xl border border-slate-100 border-dashed">
-                              <p>No hay datos procesados. Ve a "Importar Datos" para comenzar.</p>
+                              <p>No hay datos. Ve a "Importar Datos".</p>
                           </div>
                       )}
                   </div>
-              );
-      }
-  };
-
-  return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-900 flex transition-colors duration-300">
-      <Sidebar currentView={currentView} onNavigate={setCurrentView} />
-      
-      <main className="md:ml-64 p-4 md:p-8 flex-1 overflow-hidden">
-        <header className="flex flex-col md:flex-row justify-between md:items-center mb-8 gap-4">
-          <div>
-            <h2 className="text-2xl font-bold text-slate-800">
-                {currentView === 'dashboard' ? 'Panel de Control' : 
-                 currentView === 'import' ? 'Importador Inteligente' : 
-                 currentView === 'reports' ? 'Reportes y Archivos' : 'Configuración'}
-            </h2>
-            <p className="text-slate-500">
-                {currentView === 'dashboard' ? `Bienvenido, ${currentUser.name}` : 
-                 currentView === 'import' ? 'Procesa facturas y reportes en lote' : 
-                 currentView === 'reports' ? 'Historial y descargas' : 'Sistema y Usuarios'}
-            </p>
-          </div>
-        </header>
-
-        {renderView()}
-
+        )}
       </main>
-
-      <DetailModal 
-        modalData={modalData}
-        onClose={() => setModalData(prev => ({ ...prev, isOpen: false }))}
-      />
+      <DetailModal modalData={modalData} onClose={() => setModalData(prev => ({ ...prev, isOpen: false }))} />
     </div>
   );
 }

@@ -1,4 +1,15 @@
 
+// Global definition for process.env to satisfy TypeScript in browser
+declare global {
+  interface Window {
+    process: {
+      env: {
+        [key: string]: string | undefined;
+      };
+    };
+  }
+}
+
 export interface TruckRecord {
   id: string;
   patente: string;
@@ -7,6 +18,9 @@ export interface TruckRecord {
   concepto: string;
   fecha?: string;
   tag?: string;
+  // Link to source file (Invoice/Bill)
+  sourceFileId?: string;
+  sourceFileName?: string;
   // New fields for database matching
   isVerified?: boolean;
   registeredOwner?: string;
@@ -74,4 +88,9 @@ export interface ThemeSettings {
 export interface AppConfig {
     theme: ThemeSettings;
     currentUser: User | null;
+}
+
+export interface PaginationState {
+    currentPage: number;
+    itemsPerPage: number;
 }

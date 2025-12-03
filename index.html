@@ -12,17 +12,23 @@
         background-color: #f3f4f6;
       }
     </style>
+    <script>
+      // Polyfill for process.env in browser environments
+      window.process = window.process || { env: {} };
+    </script>
   <script type="importmap">
 {
   "imports": {
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@18.3.1",
+    "react/": "https://aistudiocdn.com/react@18.3.1/",
+    "react-dom": "https://aistudiocdn.com/react-dom@18.3.1",
+    "react-dom/": "https://aistudiocdn.com/react-dom@18.3.1/",
+    "react-dom/client": "https://aistudiocdn.com/react-dom@18.3.1/client",
     "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.555.0",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.344.0",
     "clsx": "https://aistudiocdn.com/clsx@^2.1.1",
     "xlsx": "https://aistudiocdn.com/xlsx@^0.18.5",
-    "recharts": "https://aistudiocdn.com/recharts@^3.5.0",
+    "recharts": "https://aistudiocdn.com/recharts@^2.12.2",
     "jspdf": "https://aistudiocdn.com/jspdf@^2.5.1/dist/jspdf.es.min.js",
     "jspdf-autotable": "https://aistudiocdn.com/jspdf-autotable@^3.8.2/dist/jspdf.plugin.autotable.js"
   }

@@ -3,7 +3,8 @@ import { TruckRecord } from "../types";
 
 // Initialize AI client
 const getAiClient = () => {
-    const apiKey = process.env.API_KEY;
+    // Safely access process.env.API_KEY or fallback to window.process.env.API_KEY if needed
+    const apiKey = process?.env?.API_KEY || (window as any).process?.env?.API_KEY;
     if (!apiKey) {
         throw new Error("CRÍTICO: API_KEY no detectada. Configure la variable de entorno en su panel de hosting/nube.");
     }
