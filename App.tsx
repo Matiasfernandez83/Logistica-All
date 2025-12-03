@@ -1,5 +1,6 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import * as React from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Stats } from './components/Stats';
 import { Charts } from './components/Charts';
